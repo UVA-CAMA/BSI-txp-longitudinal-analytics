@@ -1,0 +1,269 @@
+---
+title: "Longitudinal Analysis (Model-based approach)"
+subtitle: "Generalized Least Squares"
+author: "Jiaxing Joy Qiu"
+date: "4/28/2021"
+output: html_document
+---
+***
+### Description
+
+#### Tech
+* Regression modeling strategy
+  + we use a property to characterise a response within groups
+  + after specifying a regression structure, we optimize the model by some criteria 
+    - AIC, BIC ... for time-consuming models + large-scaled data
+    - AUROC, AUPRC ... for prediction-focused + smaller-size data
+  + if assumptions are satisfied with the optimized model, we are allowed to do inference on estimated responce and effects.
+
+* Longitudinal Data (serial data/repeated measures) Analysis
+  + Model-based 
+    - General Least Squares (GLS)
+    - Mixed Effect Model
+    - Bayesian hierarchical models
+  + Data-based
+    - Summary Measures
+ 
+#### Medical
+* 4 primary groups
+  + non_pos: postive episodes from no-transplant patients
+  + non_neg: test-negative and baseline time windows from 'pure negative' no-transplant patients
+  + txp_pos: postive episodes from transplant patients
+  + txp_neg: test-negative and baseline  time windows from 'pure negative' transplant patients
+
+* An *episode*
+  + from 24 hours before to 24 hours after a blood stream acquisition
+
+* Questions 
+  1. What's the response trend of a feature during one 'episode' **within** groups?
+  2. What's the difference of response trend of a feature during one 'episode' **across** groups?
+    
+
+***
+### Report
+* Assumption-satisfied Variables
+  + Temp
+  + Resp
+  + Pulse
+  + SBP
+  + DBP
+  + POTASSIUM
+  + ALBUMIN
+  + CALCIUM
+  + SODIUM
+  + WHITE_BLOOD_CELL_COUNT
+  + PHOSPHORUS
+  + PLATELET_COUNT
+  + CO2
+  + PCO2
+  + CHLORIDE
+  + BLOOD_UREA_NITROGEN
+  + MAGNESIUM
+
+* model assumption checking plots
+* partial effect plots
+* contrast (subtract) inference plots
+  + by subtracting estimated response from 2 groups and comparing the confidence interval with 0, we can do inference (example - Temperature)
+    - In no-transplant group, our data suggest a significant increase in temperature in postive episodes than control (negative+baseline) episodes
+    - In transplant group, our data **don't** suggest a significant increase in positive episodes than control (negative-baseline) episodes
+
+***
+```{r setup, include=FALSE}
+rm(list=ls())
+knitr::opts_knit$set(root.dir = "~/Documents/BSI/code/Transplant")
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=FALSE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.dim = c(10,7),     # set figure width
+                      out.width = "100%", # set width of displayed images
+                      warning=FALSE,     # do not show R warnings
+                      message=FALSE,
+                      results='asis')     # do not show R messages
+
+```
+
+```{r}
+# --- prepare suitable dataset for this task  ----
+source("./prepare/prep_raw.R")
+# --- prepare global functions ----
+source("./prepare/functions.R")
+```
+
+```{r}
+# --- prepare local functions and packages ----
+require(rms)
+require(nlme)
+require(ggpubr)
+
+# ---- prepare feature names ----
+features <- c('Temp', 
+              'Resp', 
+              'Pulse', 
+              'SBP', 
+              'DBP', 
+              #'SpO2',
+              #'GCS', 
+              #'FiO2', 
+              #'O2_Flow', 
+              #'GLUCOSE', 
+              #'TOTAL_BILIRUBIN', 
+              'POTASSIUM',
+              'ALBUMIN', 
+              'CALCIUM', 
+              'SODIUM', 
+              'WHITE_BLOOD_CELL_COUNT', 
+              'PHOSPHORUS',
+              #'PROTIME_INR', 
+              #'CREATININE', 
+              'PLATELET_COUNT', 
+              #'ALT_GPT', 
+              'CO2',
+              #'ALKALINE_PHOSPHATASE', 
+              #'AST_GOT', 
+              'PCO2', 
+              'CHLORIDE', 
+              #'TROPONIN_I',
+              #'PARTIAL_THROMBOPLASTIN_TIME', 
+              #'LACTIC_ACID', 
+              'BLOOD_UREA_NITROGEN',
+              #'OXYGEN_SATURATION', 
+              'MAGNESIUM'#, 
+              #'FIO2'
+              )
+# ---- prepare task data ----
+data <- bind_rows(df_ep_raw, df_safe_window_raw)
+data$group <- as.factor(data$group)
+data$ep_id <- as.factor(data$ep_id)
+data$time_idx <- as.numeric(data$relative_time - min(data$relative_time) +1) # start 1 step 1 time index ##### don't name variable 'time'
+```
+
+
+```{r}
+
+for (fea in features){
+  # ---- print html title -----
+  cat("\n***\n")
+  cat("\n####", fea ,"mean response\n") 
+
+  # ---- prepare model object arguments ----
+  df_mdl <- data[, c(fea, 'time_idx', 'group', 'ep_id')]
+  df_mdl$y <- df_mdl[, fea]
+  dd <- datadist(df_mdl)
+  options(datadistt='dd')
+  options(prType='html')
+  fml <- formula("y ~ rcs(time_idx, 5) * catg(group)")
+  
+  
+  # ---- load pretrained model object ----
+  load(file = paste0("./task_longitudinal_mdl/gls/gls_mdl_obj/",fea,"_mdl.rda"))
+  
+  # ---- model assumption plots ----
+  cat("\n* Check model assumptions\n") 
+  
+  df_res <- na.omit(df_mdl)
+  df_res$resid <- r<- resid(mdl)
+  df_res$fitted <- fitted(mdl)
+ 
+  p1 <- ggplot(df_res, aes(x=fitted, y=resid)) + geom_point(size=0.1) + 
+    facet_grid(~ group) + ylab('Residuals')
+  
+  p3 <- ggplot(df_res, aes(sample=resid)) + stat_qq(size=0.1) + geom_abline(intercept = mean(r), slope = sd(r)) + ylab('Residuals')
+  p4 <- ggplot(df_res, aes(x=(as.numeric(time_idx)-97)/4, y=resid)) +
+    #stat_summary(fun.data="mean_sdl", geom = "smooth") + 
+    geom_point(size=0.1) +
+    ylab('Residuals') + xlab('relative hour')
+  p2 <- ggpubr::ggarrange(p3, p4, nrow=1, ncol=2)
+  print(ggpubr::ggarrange(p1, p2, nrow=2, ncol=1))
+  
+  
+  
+  # ----  partial effect and contrast inference plots ----
+  cat("\n* Partiel effect and contrast inference\n")
+  p_eff <- ggplot(Predict(mdl, time_idx, group)) + ylab(fea) 
+  #p <- Predict(mdl, time_idx, group)
+  #s <- Predict(mdl, time_idx, group, conf.type = 'simultaneous')
+  #ps <- rbind(Pointwise=p, Simultaneous=s)
+  
+  # ---- contrast dataframes ----
+  # non_pos - non_neg
+  t <- seq(1, 197)
+  k <- contrast(mdl,
+                list(time_idx=t, group = 'non_pos'),
+                list(time_idx=t, group = 'non_neg'))
+  k_non <- as.data.frame(k[c('time_idx', 'Contrast', 'Lower', 'Upper')])
+  
+  # txp_pos - txp_neg
+  t <- seq(1, 197)
+  k <- contrast(mdl,
+                a=list(time_idx=t, group = 'txp_pos'),
+                b=list(time_idx=t, group = 'txp_neg'))
+  k_txp <- as.data.frame(k[c('time_idx', 'Contrast', 'Lower', 'Upper')])
+ 
+  # txp_pos - non_pos
+  t <- seq(1, 197)
+  k <- contrast(mdl,
+                list(time_idx=t, group = 'non_pos'),
+                list(time_idx=t, group = 'txp_pos'))
+  k_pos <- as.data.frame(k[c('time_idx', 'Contrast', 'Lower', 'Upper')])
+  
+  # txp_neg - non_neg 
+  t <- seq(1, 197)
+  k <- contrast(mdl,
+                list(time_idx=t, group = 'non_neg'),
+                list(time_idx=t, group = 'txp_neg'))
+  k_neg <- as.data.frame(k[c('time_idx', 'Contrast', 'Lower', 'Upper')])
+  
+  
+  
+  # ---- contrast plots ----
+  # coerce same y lim
+  l <- min(k_non$Lower, k_txp$Lower, k_pos$Lower, k_neg$Lower)
+  u <- max(k_non$Upper, k_txp$Upper, k_pos$Upper, k_neg$Upper)
+  yl <- ylim(l,u)
+  
+  p_non <- ggplot(k_non, aes(x=(time_idx-97)/4, y=Contrast)) + 
+    geom_line() +
+    geom_ribbon(aes(ymin=Lower, ymax=Upper), alpha=0.2, linetype=0, show_guide=FALSE) + 
+    geom_hline(yintercept = 0, col='red', size=0.2)+
+    xlab("relative hour") +
+    ylab("pos - neg") +
+    yl +
+    ggtitle("No-transplant")
+  
+  p_txp <- ggplot(k_txp, aes(x=(time_idx-97)/4, y=Contrast)) + 
+    geom_line() +
+    geom_ribbon(aes(ymin=Lower, ymax=Upper), alpha=0.2, linetype=0, show_guide=FALSE) + 
+    geom_hline(yintercept = 0, col='red', size=0.2)+
+    xlab("relative hour") +
+    ylab("pos - neg") +
+    yl +
+    ggtitle("Transplant")
+  
+  p_pos <- ggplot(k_pos, aes(x=(time_idx-97)/4, y=Contrast)) + 
+    geom_line() +
+    geom_ribbon(aes(ymin=Lower, ymax=Upper), alpha=0.2, linetype=0, show_guide=FALSE) + 
+    geom_hline(yintercept = 0, col='red', size=0.2)+
+    xlab("relative hour") +
+    ylab("non - txp") +
+    yl +
+    ggtitle("Positive")
+  
+  p_neg <- ggplot(k_neg, aes(x=(time_idx-97)/4, y=Contrast)) + 
+    geom_line() +
+    geom_ribbon(aes(ymin=Lower, ymax=Upper), alpha=0.2, linetype=0, show_guide=FALSE) + 
+    geom_hline(yintercept = 0, col='red', size=0.2)+
+    xlab("relative hour") +
+    ylab("non - txp") +
+    yl +
+    ggtitle("Negative")
+  
+  p_diff <- ggpubr::ggarrange(p_non, p_txp, p_pos, p_neg, nrow=2, ncol=2)
+  print(ggpubr::ggarrange(p_eff, p_diff, nrow=2, ncol=1))
+
+}
+
+```
+
+
+
