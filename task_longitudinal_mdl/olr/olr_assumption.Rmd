@@ -1,0 +1,112 @@
+---
+title: "OLR Estimated Mean Trend (Modeling and Assumption check)"
+author: "Jiaxing Joy Qiu"
+date: "4/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "~/Documents/BSI/code/Transplant")
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=FALSE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.dim = c(10,6),     # set figure width
+                      out.width = "100%", # set width of displayed images
+                      warning=FALSE,     # do not show R warnings
+                      message=FALSE,
+                      result='asis')     # do not show R messages
+
+```
+
+```{r}
+# --- prepare suitable dataset for this task  ----
+source("./prepare/prep_raw.R")
+# --- prepare global functions ----
+source("./prepare/functions.R")
+# --- prepare local functions if in need ----
+```
+
+## Description
+
+### Hypothesis
+
+* Mean of physiological and clinical features change **differently** over time in 4 primary groups - txp_pos, non_pos, txp_neg, non_neg. Our goal is to quantify the difference statistically.
+
+### Interpretation
+
+* **If linear regression assumptions holds**, the departure of confidence interval of feature mean conditioned/given a certain time in 4 groups reviews "significant" difference in time trend of feature mean in 4 groups. 
+
+### Data
+
+* time window
+  + (-24h,24h) around a blood culture
+  + 48h window around an observation with the most number of data available in a patient's safe zone
+
+* Imputation
+  + raw
+
+### Method
+
+* Ordinary linear regression
+  + Formula 
+    - feature ~ rcs(time, 5) * group
+  + Cluster
+    - multiple episodes from one patient
+
+    
+  + Outcome(y-axis)
+    - the estimated conditional feature mean value with 95% confidence interval for the estimation
+  
+  + Assumptions checking
+    - **L**inearity: responce feature is a linear combination of predictors (r vs. fitted)
+    - **I**ndependence: the errors are independent (conditioned on time) (r vs. fitted)
+    - **N**ormality: the distribution of the errors should follow a normal distribution (qqplot)
+    - **E**qual Variance: the error variance is the same at any set of predictors (r vs. predictors)
+  
+
+
+```{r}
+
+#  prepare global constants
+features <- c( 'Temp', 'Resp', 'Pulse', 'SBP', 'DBP', 'SpO2',
+                'GCS', 'FiO2', 'O2_Flow', 'GLUCOSE', 'TOTAL_BILIRUBIN', 'POTASSIUM',
+                'ALBUMIN', 'CALCIUM', 'SODIUM', 'WHITE_BLOOD_CELL_COUNT', 'PHOSPHORUS',
+                'PROTIME_INR', 'CREATININE', 'PLATELET_COUNT', 'ALT_GPT', 'CO2',
+                'ALKALINE_PHOSPHATASE', 'AST_GOT', 'PCO2', 'CHLORIDE', 'TROPONIN_I',
+                'PARTIAL_THROMBOPLASTIN_TIME', 'LACTIC_ACID', 'BLOOD_UREA_NITROGEN',
+                'OXYGEN_SATURATION', 'MAGNESIUM', 'FIO2')
+
+```
+
+```{r}
+# prepare modeling data
+df_mdl <- bind_rows(df_ep_raw, df_safe_window_raw)
+df_mdl$group <- as.factor(df_mdl$group)
+df_mdl$cluster <- as.factor(paste0(df_mdl$id,"_",df_mdl$relative_time)) # repeated measures caused by multiple episodes from same patient
+df_mdl$relative_hour <- df_mdl$relative_time/4
+
+
+dd <- datadist(df_mdl)
+options(datadist='dd')
+options(na.action = "na.omit")
+```
+
+
+```{r results='asis'}
+for (fea in features){
+  fml <- formula(paste0(fea," ~ rcs(relative_hour,5) *catg(group)"))
+  mdl <- robcov(ols(fml,x=TRUE, y=TRUE,data=df_mdl), cluster=df_mdl$cluster)
+  print(ggplot(Predict(mdl, relative_hour, group)))
+  
+  # check normality of residuals
+  r <- resid(mdl)
+  par(mfrow=c(2,2))
+  plot(fitted(mdl), r); abline(h=0)  # check independence of errors and linearity
+  with(df_mdl, plot(relative_hour, r)); abline(h=0) # check equal variances
+  with(df_mdl, plot(group, r)); abline(h=0) # check equal variances
+  qqnorm(r) # check normality
+  qqline(as.numeric(r))
+  par(mfrow=c(1,1))
+}
+```

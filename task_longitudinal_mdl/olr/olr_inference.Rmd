@@ -1,0 +1,106 @@
+---
+title: "OLR Estimated Mean Trend (Inference)"
+author: "Jiaxing Joy Qiu"
+date: "4/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "~/Documents/BSI/code/Transplant")
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=FALSE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.dim = c(10,6),     # set figure width
+                      out.width = "100%", # set width of displayed images
+                      warning=FALSE,     # do not show R warnings
+                      message=FALSE,
+                      result='asis')     # do not show R messages
+
+```
+
+```{r}
+# --- prepare suitable dataset for this task  ----
+source("./prepare/prep_org.R")
+# --- prepare global functions ----
+source("./prepare/functions.R")
+# --- prepare local functions if in need ----
+```
+
+### Regression Modeling Strategy
+
+* To charaterise clinical and physiological features within a cohort of interest, we use a property to represent them.
+  + In OLR (oridinary linear regression), the property is mean
+  + In QR (quantile regression), the property is median or quantiles
+  + In LR (logistic regression), the property is the probability of a binary outcome = 1
+
+* If assumptions are satisfied in above modeling strategies
+  + we are allowed to do inference / test hypotheses using the model results
+
+
+### OLR assumption-statisfied features
+
++ Temp
++ Pulse
++ SBP
++ DBP
++ POTASSIUM
++ ALBUMIN
++ CALCIUM
++ WHITE_BLOOD_CELL_COUNT
++ CO2
++ CHLORIDE
++ MAGNESIUM
+
+
+### Hypotheses to test (Inference)
+1. Clinical and physiological features **change** over time in each group - txp_pos / non_pos / txp_neg / non_neg
+
+
+
+### Data
+
+* time window
+  + (-24h,24h) around a blood culture
+  + 48h window around an observation in a patient's safe zone which has most number of data available
+
+* Imputation
+  + individual 
+
+
+
+
+```{r}
+# prepare modeling data
+df_mdl <- bind_rows(df_ep_original, df_safe_window_original)
+df_mdl$group <- as.factor(df_mdl$group)
+df_mdl$cluster <- as.factor(paste0(df_mdl$id,"_",df_mdl$relative_time)) # repeated measures caused by multiple episodes from same patient
+df_mdl$relative_hour <- df_mdl$relative_time/4
+
+```
+
+```{r}
+#  prepare features that satisfy OLS 
+features <- c( 'Temp','Pulse', 'SBP', 'DBP', 'POTASSIUM',
+                'ALBUMIN', 'CALCIUM', 'WHITE_BLOOD_CELL_COUNT', 'CO2', 'CHLORIDE','MAGNESIUM')
+
+```
+
+```{r results='asis'}
+dd <- datadist(df_mdl)
+options(datadist='dd')
+options(na.action = "na.omit")
+
+for (fea in features){
+  fml <- formula(paste0(fea," ~ rcs(relative_hour,5) *catg(group)"))
+  mdl <- robcov(ols(fml,x=TRUE, y=TRUE,data=df_mdl), cluster=df_mdl$cluster)
+  print(ggplot(Predict(mdl, relative_hour, group)))
+  
+  par(mfrow=c(1,3))
+  plot(mdl$fitted.values, mdl$residuals)
+  qqnorm(mdl$residuals)
+  qqline(mdl$residuals)
+  hist(mdl$residuals)
+  par(mfrow=c(1,1))
+}
+```
