@@ -1,4 +1,4 @@
-# Longitudinal modeling for transplant Bloodstream Infection
+# Longitudinal Modeling for Transplant-associated Bloodstream Infection in ICU
 Language: R </br>
 Modeling Strategy: </br>
 1. Preprocess data: slice 48 hours time windows for pre-defined positive / negative / baseline episodes around blood culture acquisitions.
