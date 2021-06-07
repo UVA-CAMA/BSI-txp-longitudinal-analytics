@@ -1,0 +1,87 @@
+---
+title: "Feature Mean Time Trend Viz"
+author: "Jiaxing Joy Qiu"
+date: "4/24/2021"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "~/Documents/BSI/code/Transplant")
+knitr::opts_chunk$set(error=TRUE,        # Keep compiling upon error
+                      collapse=FALSE,    # collapse by default
+                      echo=FALSE,         # echo code by default
+                      comment = "#>",    # change comment character
+                      fig.dim = c(10,3),     # set figure width
+                      out.width = "100%", # set width of displayed images
+                      warning=FALSE,     # do not show R warnings
+                      message=FALSE,
+                      result='asis')     # do not show R messages
+
+```
+
+```{r}
+# --- prepare suitable dataset for this task  ----
+source("./prepare/prep_raw.R")
+# --- prepare local functions if in need ----
+source("./task_time_trend_inference/functions.R")
+```
+
+### Description
+
+* To characterise the difference of a feature over time in 4 primary groups, non_neg / noo_pos / txp_neg / txp_pos, we use the **mean** statistic of the feature at a certain time.
+
+* Visualization comparison
+  + Left: empirical
+    - the error bar is 95% confidence interval of feature **mean** at given time, calculated from **standard error (se)**, (note: larger the sample size *n*, smaller the *se*)
+  + Right: linear regression 
+    - the ribbon is 95% confidence interval of estimated **mean response**
+
+```{r}
+#  prepare global constants
+features <- c( 'Temp', 'Resp', 'Pulse', 'SBP', 'DBP', 'SpO2',
+                'GCS', 'FiO2', 'O2_Flow', 'GLUCOSE', 'TOTAL_BILIRUBIN', 'POTASSIUM',
+                'ALBUMIN', 'CALCIUM', 'SODIUM', 'WHITE_BLOOD_CELL_COUNT', 'PHOSPHORUS',
+                'PROTIME_INR', 'CREATININE', 'PLATELET_COUNT', 'ALT_GPT', 'CO2',
+                'ALKALINE_PHOSPHATASE', 'AST_GOT', 'PCO2', 'CHLORIDE', 'TROPONIN_I',
+                'PARTIAL_THROMBOPLASTIN_TIME', 'LACTIC_ACID', 'BLOOD_UREA_NITROGEN',
+                'OXYGEN_SATURATION', 'MAGNESIUM', 'FIO2')
+
+
+df_mdl <- bind_rows(df_ep_raw, df_safe_window_raw)
+df_mdl$group <- as.factor(df_mdl$group)
+df_mdl$cluster <- as.factor(paste0(df_mdl$id,"_",df_mdl$relative_time)) # repeated measures caused by multiple episodes from same patient
+df_mdl$relative_hour <- df_mdl$relative_time/4
+
+
+dd <- datadist(df_mdl)
+options(datadist='dd')
+options(na.action = "na.omit")
+```
+
+```{r}
+
+for (fea in features){
+  
+  # empirical  time trend plot
+  summ <- summarySE(df_mdl, measurevar=fea, groupvars=c("group", "relative_hour"), na.rm = TRUE)
+  pd <- position_dodge(0.1) # move them .05 to the left and right
+  p1 <- ggplot(summ, aes(x=relative_hour, y=summ[,fea], colour=group)) + 
+    geom_errorbar(aes(ymin=summ[,fea]-se, ymax=summ[,fea]+se), size=0.3, width=.05, alpha=0.5, position=pd) +
+    geom_line(position=pd) +
+    geom_point(size=0.3,position=pd) +
+    ylab(fea)+
+    scale_color_brewer(palette="Set2")
+
+
+  # linear regression time trend
+  fml <- formula(paste0(fea," ~ rcs(relative_hour,5) * catg(group)"))
+  mdl <- robcov(ols(fml,x=TRUE, y=TRUE,data=df_mdl), cluster=df_mdl$cluster)
+  p2 <- ggplot(Predict(mdl, relative_hour, group))+
+    scale_color_brewer(palette="Set2")
+
+  print(ggpubr::ggarrange(p1,p2, ncol=2, nrow=1,
+                          legend="right", common.legend=TRUE))
+  
+}
+```
+
+
